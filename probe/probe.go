@@ -18,62 +18,48 @@ type stat struct {
 
 // Probe probe
 type Probe struct {
-	probeGroup    *sync.WaitGroup
-	downloadGroup *sync.WaitGroup
-	urlChannel    chan string
-	resChannel    chan http.Response
-	concurrency   int
-	stat          stat
-	temp          int
+	urlChan chan string
+	resChan chan http.Response
+	guard   chan struct{}
+	done    chan struct{}
+	stat    stat
+	temp    int
 }
 
-// runGenURLTask generates url
 func (probe *Probe) runGenURLTask() {
-	defer probe.probeGroup.Done()
-	defer func() {
-		for {
-			if len(probe.urlChannel) == 0 {
-				close(probe.urlChannel)
-				break
-			}
-		}
-	}()
-	probe.GenURL()
-}
-
-// GenURL generates urls
-func (probe *Probe) GenURL() {
 	for i := 0; i < 500; i++ {
-		probe.urlChannel <- "https://www.google.com"
+		probe.urlChan <- "https://www.baidu.com"
 	}
+	close(probe.urlChan)
 }
 
 func (probe *Probe) runDownloadTask() {
-	defer probe.probeGroup.Done()
-	defer close(probe.resChannel)
-	defer probe.downloadGroup.Wait()
-	probe.downloadGroup.Add(probe.concurrency)
-	for i := 0; i < probe.concurrency; i++ {
-		go probe.downloadTask(i)
+	wg := sync.WaitGroup{}
+	for url := range probe.urlChan {
+		probe.guard <- struct{}{}
+		wg.Add(1)
+		go probe.downloadTask(url, &wg)
 	}
+	wg.Wait()
+	close(probe.resChan)
 }
 
-func (probe *Probe) downloadTask(i int) {
-	defer probe.downloadGroup.Done()
-	for url := range probe.urlChannel {
-		res, err := getRes(url)
-		if err != nil {
-			log.Println(err)
-			probe.stat.urlFailedCount++
-			continue
-		}
-		probe.resChannel <- *res
-		probe.stat.urlSucceedCount++
+func (probe *Probe) downloadTask(url string, wg *sync.WaitGroup) {
+	defer func() {
+		<-probe.guard
+		wg.Done()
+	}()
+	res, err := getRes(url)
+	if err != nil {
+		log.Println(err)
+		probe.stat.urlFailedCount++
+		return
 	}
+	probe.resChan <- *res
+	probe.stat.urlSucceedCount++
 }
 
 func getRes(url string) (*http.Response, error) {
-
 	client := http.Client{}
 	header := http.Header{}
 	header.Set("User-Agent", "probe 0.0.1")
@@ -103,12 +89,11 @@ func getRes(url string) (*http.Response, error) {
 }
 
 func (probe *Probe) runSaveDataTask() {
-
-	defer probe.probeGroup.Done()
-	for res := range probe.resChannel {
-		defer res.Body.Close()
+	for res := range probe.resChan {
 		probe.Save(res)
+		_ = res.Body.Close()
 	}
+	close(probe.done)
 }
 
 // Save saves data
@@ -125,42 +110,47 @@ func (probe *Probe) Save(res http.Response) {
 func (probe *Probe) printFinal() {
 	deltaTime := time.Now().Sub(probe.stat.startTime)
 	speed := float64(probe.stat.urlSucceedCount) / deltaTime.Minutes()
+	fmt.Printf("Fetched URL: %d, Failed: %d [ %.2f%% ]\n", probe.stat.urlSucceedCount, probe.stat.urlFailedCount, probe.rate())
 	fmt.Printf("Speed: %.2f req/min, URL: %d\n", speed, probe.stat.urlSucceedCount+probe.stat.urlFailedCount)
 }
 
 func (probe *Probe) runLoggingTask() {
+	ticker := time.NewTicker(time.Second)
 	for {
-		var rate float64
-		if probe.stat.urlSucceedCount+probe.stat.urlFailedCount != 0 {
-			rate = float64(probe.stat.urlSucceedCount) / float64(probe.stat.urlSucceedCount+probe.stat.urlFailedCount) * 100
-		} else {
-			rate = 0
+		select {
+		case <-ticker.C:
+			fmt.Printf("Fetched URL: %d, Failed: %d [ %.2f%% ]\n", probe.stat.urlSucceedCount, probe.stat.urlFailedCount, probe.rate())
+		case <-probe.done:
+			return
 		}
-		fmt.Printf("Fetched URL: %d, Failed: %d [ %.2f%% ]\n", probe.stat.urlSucceedCount, probe.stat.urlFailedCount, rate)
-		time.Sleep(1 * time.Second)
 	}
+}
+
+func (probe *Probe) rate() float64 {
+	rate := 0.0
+	if probe.stat.urlSucceedCount+probe.stat.urlFailedCount != 0 {
+		rate = float64(probe.stat.urlSucceedCount) / float64(probe.stat.urlSucceedCount+probe.stat.urlFailedCount) * 100
+	}
+	return rate
 }
 
 // Run run the probe
 func (probe *Probe) Run() {
 	probe.stat.startTime = time.Now()
-	probe.probeGroup.Add(3)
 	defer probe.printFinal()
-	defer probe.probeGroup.Wait()
 	go probe.runGenURLTask()
 	go probe.runDownloadTask()
 	go probe.runSaveDataTask()
-	go probe.runLoggingTask()
+	probe.runLoggingTask()
 }
 
 // NewProbe generates new Probe
 func NewProbe() *Probe {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	return &Probe{
-		urlChannel:    make(chan string, 16),
-		resChannel:    make(chan http.Response, 16),
-		probeGroup:    &sync.WaitGroup{},
-		downloadGroup: &sync.WaitGroup{},
-		concurrency:   128,
+		urlChan: make(chan string),
+		resChan: make(chan http.Response),
+		guard:   make(chan struct{}, 128),
+		done:    make(chan struct{}),
 	}
 }

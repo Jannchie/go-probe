@@ -1,12 +1,15 @@
 package probe
 
 import (
+	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/html"
 )
 
 type stat struct {
@@ -18,18 +21,20 @@ type stat struct {
 
 // Probe probe
 type Probe struct {
-	urlChan chan string
-	resChan chan http.Response
-	guard   chan struct{}
-	done    chan struct{}
-	stat    stat
-	temp    int
+	urlChan  chan string
+	resChan  chan http.Response
+	guard    chan struct{}
+	done     chan struct{}
+	stat     stat
+	settings map[string]interface{}
+	GenURL   func(urlChan chan string)
+	OnRes    func(res http.Response)
+	OnJSON   func(json interface{})
+	OnHTML   func(html *html.Node)
 }
 
 func (probe *Probe) runGenURLTask() {
-	for i := 0; i < 500; i++ {
-		probe.urlChan <- "https://www.baidu.com"
-	}
+	probe.GenURL(probe.urlChan)
 	close(probe.urlChan)
 }
 
@@ -87,24 +92,24 @@ func getRes(url string) (*http.Response, error) {
 	}
 	return res, nil
 }
-
 func (probe *Probe) runSaveDataTask() {
 	for res := range probe.resChan {
-		probe.Save(res)
+		probe.OnRes(res)
+		contentType := res.Header.Get("Content-Type")
+		if strings.Contains(contentType, "application/json") {
+			var j interface{}
+			json.NewDecoder(res.Body).Decode(j)
+			probe.OnJSON(j)
+		} else if strings.Contains(contentType, "text/html") {
+			doc, err := html.Parse(res.Body)
+			if err != nil {
+				continue
+			}
+			probe.OnHTML(doc)
+		}
 		_ = res.Body.Close()
 	}
 	close(probe.done)
-}
-
-// Save saves data
-func (probe *Probe) Save(res http.Response) {
-	// fmt.Println(res.Status)
-	if probe.stat.urlSucceedCount == 1 {
-		_, err := ioutil.ReadAll(res.Body)
-		if err != nil {
-			return
-		}
-	}
 }
 
 func (probe *Probe) printFinal() {
@@ -137,11 +142,11 @@ func (probe *Probe) rate() float64 {
 // Run run the probe
 func (probe *Probe) Run() {
 	probe.stat.startTime = time.Now()
-	defer probe.printFinal()
 	go probe.runGenURLTask()
 	go probe.runDownloadTask()
 	go probe.runSaveDataTask()
 	probe.runLoggingTask()
+	probe.printFinal()
 }
 
 // NewProbe generates new Probe
@@ -152,5 +157,10 @@ func NewProbe() *Probe {
 		resChan: make(chan http.Response),
 		guard:   make(chan struct{}, 128),
 		done:    make(chan struct{}),
+		GenURL: func(urlChan chan string) {
+			fmt.Println("Please implement the function: GenURL")
+		},
+		OnJSON: func(json interface{}) {},
+		OnHTML: func(html *html.Node) {},
 	}
 }

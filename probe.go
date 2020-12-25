@@ -29,7 +29,7 @@ type Probe struct {
 	settings map[string]interface{}
 	GenURL   func(urlChan chan string)
 	OnRes    func(res http.Response)
-	OnJSON   func(json interface{})
+	OnJSON   func(json map[string]interface{})
 	OnHTML   func(html *html.Node)
 }
 
@@ -97,8 +97,8 @@ func (probe *Probe) runSaveDataTask() {
 		probe.OnRes(res)
 		contentType := res.Header.Get("Content-Type")
 		if strings.Contains(contentType, "application/json") {
-			var j interface{}
-			json.NewDecoder(res.Body).Decode(j)
+			var j map[string]interface{}
+			json.NewDecoder(res.Body).Decode(&j)
 			probe.OnJSON(j)
 		} else if strings.Contains(contentType, "text/html") {
 			doc, err := html.Parse(res.Body)
@@ -160,7 +160,8 @@ func NewProbe() *Probe {
 		GenURL: func(urlChan chan string) {
 			fmt.Println("Please implement the function: GenURL")
 		},
-		OnJSON: func(json interface{}) {},
+		OnRes:  func(res http.Response) {},
+		OnJSON: func(json map[string]interface{}) {},
 		OnHTML: func(html *html.Node) {},
 	}
 }

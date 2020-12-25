@@ -19,18 +19,23 @@ type stat struct {
 	startTime       time.Time
 }
 
+type settings struct {
+	header http.Header
+}
+
 // Probe probe
 type Probe struct {
-	urlChan  chan string
-	resChan  chan http.Response
-	guard    chan struct{}
-	done     chan struct{}
-	stat     stat
-	settings map[string]interface{}
+	settings settings
 	GenURL   func(urlChan chan string)
 	OnRes    func(res http.Response)
 	OnJSON   func(json map[string]interface{})
 	OnHTML   func(html *html.Node)
+	guard    chan struct{}
+	done     chan struct{}
+	urlChan  chan string
+	resChan  chan http.Response
+	client   *http.Client
+	stat     stat
 }
 
 func (probe *Probe) runGenURLTask() {
@@ -54,7 +59,7 @@ func (probe *Probe) downloadTask(url string, wg *sync.WaitGroup) {
 		<-probe.guard
 		wg.Done()
 	}()
-	res, err := getRes(url)
+	res, err := probe.getRes(url)
 	if err != nil {
 		log.Println(err)
 		probe.stat.urlFailedCount++
@@ -64,29 +69,13 @@ func (probe *Probe) downloadTask(url string, wg *sync.WaitGroup) {
 	probe.stat.urlSucceedCount++
 }
 
-func getRes(url string) (*http.Response, error) {
-	client := http.Client{}
-	header := http.Header{}
-	header.Set("User-Agent", "probe 0.0.1")
+func (probe *Probe) getRes(url string) (*http.Response, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.AddCookie(&http.Cookie{
-		Name:       "",
-		Value:      "",
-		Path:       "",
-		Domain:     "",
-		Expires:    time.Time{},
-		RawExpires: "",
-		MaxAge:     0,
-		Secure:     false,
-		HttpOnly:   false,
-		SameSite:   0,
-		Raw:        "",
-		Unparsed:   []string{},
-	})
-	res, err := client.Do(req)
+	req.Header = probe.settings.header
+	res, err := probe.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -152,16 +141,22 @@ func (probe *Probe) Run() {
 // NewProbe generates new Probe
 func NewProbe() *Probe {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	h := http.Header{}
+	h.Set("User-Agent", "Probe ver.0.0.1")
 	return &Probe{
+		client:  &http.Client{},
 		urlChan: make(chan string),
 		resChan: make(chan http.Response),
 		guard:   make(chan struct{}, 128),
 		done:    make(chan struct{}),
 		GenURL: func(urlChan chan string) {
-			fmt.Println("Please implement the function: GenURL")
+			log.Fatal("Please implement the function: GenURL")
 		},
 		OnRes:  func(res http.Response) {},
 		OnJSON: func(json map[string]interface{}) {},
 		OnHTML: func(html *html.Node) {},
+		settings: settings{
+			header: h,
+		},
 	}
 }

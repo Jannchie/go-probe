@@ -2,6 +2,7 @@ package probe
 
 import (
 	"fmt"
+	"net/http"
 	"testing"
 
 	"github.com/antchfx/htmlquery"
@@ -28,6 +29,21 @@ func TestProbeFetchJson(t *testing.T) {
 	}
 	p.OnJSON = func(json map[string]interface{}) {
 		fmt.Println(json)
+	}
+	p.Run()
+}
+func TestHeader(t *testing.T) {
+	p := NewProbe()
+	p.settings.header.Set("User-Agent", "test")
+	p.GenURL = func(urlChan chan string) {
+		urlChan <- "https://www.baidu.com"
+	}
+	p.OnRes = func(res http.Response) {
+		ua := res.Request.Header.Get("User-Agent")
+		fmt.Println(ua)
+		if ua != "test" {
+			t.Fail()
+		}
 	}
 	p.Run()
 }

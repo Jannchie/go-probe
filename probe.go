@@ -9,8 +9,14 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/net/html"
+	"github.com/PuerkitoBio/goquery"
 )
+
+// Document is goquery.Document's alias name.
+type Document = goquery.Document
+
+// Selection is goquery.Selection's alias name.
+type Selection = goquery.Selection
 
 type stat struct {
 	urlSucceedCount int
@@ -29,7 +35,7 @@ type Probe struct {
 	GenURL   func(urlChan chan string)
 	OnRes    func(res http.Response)
 	OnJSON   func(json map[string]interface{})
-	OnHTML   func(html *html.Node)
+	OnHTML   func(html *Document)
 	guard    chan struct{}
 	done     chan struct{}
 	urlChan  chan string
@@ -90,7 +96,7 @@ func (probe *Probe) runSaveDataTask() {
 			json.NewDecoder(res.Body).Decode(&j)
 			probe.OnJSON(j)
 		} else if strings.Contains(contentType, "text/html") {
-			doc, err := html.Parse(res.Body)
+			doc, err := goquery.NewDocumentFromReader(res.Body)
 			if err != nil {
 				continue
 			}
@@ -154,7 +160,7 @@ func NewProbe() *Probe {
 		},
 		OnRes:  func(res http.Response) {},
 		OnJSON: func(json map[string]interface{}) {},
-		OnHTML: func(html *html.Node) {},
+		OnHTML: func(html *Document) {},
 		settings: settings{
 			header: h,
 		},

@@ -4,9 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
-
-	"github.com/antchfx/htmlquery"
-	"golang.org/x/net/html"
 )
 
 func TestProbeFetchHtml(t *testing.T) {
@@ -14,11 +11,12 @@ func TestProbeFetchHtml(t *testing.T) {
 	p.GenURL = func(urlChan chan string) {
 		urlChan <- "https://www.google.com"
 	}
-	p.OnHTML = func(doc *html.Node) {
-		nodes := htmlquery.Find(doc, "//a/@href")
-		for _, node := range nodes {
-			fmt.Println(htmlquery.SelectAttr(node, "href"))
-		}
+	p.OnHTML = func(doc *Document) {
+		doc.Find("a").Each(func(i int, s *Selection) {
+			txt := s.Text()
+			url, _ := s.Attr("href")
+			fmt.Println(txt, url)
+		})
 	}
 	p.Run()
 }
